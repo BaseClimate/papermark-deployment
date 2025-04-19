@@ -7,6 +7,6 @@ generator client {
   provider = "prisma-client-js"
 }
 
-include "./schema/conversation.prisma"
-include "./schema/dataroom.prisma"
-include "./schema/link.prisma"
+include "./schemas/conversation.prisma"
+include "./schemas/dataroom.prisma"
+include "./schemas/link.prisma"
