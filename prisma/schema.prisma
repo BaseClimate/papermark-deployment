@@ -7,6 +7,426 @@ generator client {
   provider = "prisma-client-js"
 }
 
-include "./schemas/conversation.prisma"
-include "./schemas/dataroom.prisma"
-include "./schemas/link.prisma"
+model Conversation {
+  id                String    @id @default(cuid())
+  title             String?   // Optional title for the conversation
+  isEnabled         Boolean   @default(true)
+
+  // Visibility control
+  visibilityMode    ConversationVisibility @default(PRIVATE)
+
+  // Core relationships
+  dataroomId        String
+  dataroom          Dataroom  @relation(fields: [dataroomId], references: [id], onDelete: Cascade)
+
+  // Optional attachments
+  dataroomDocumentId String?
+  dataroomDocument   DataroomDocument? @relation(fields: [dataroomDocumentId], references: [id], onDelete: SetNull)
+  documentVersionNumber     Int?      // Optional document version number reference
+  documentPageNumber        Int?      // Optional document page number reference
+
+  // Optional link relationship
+  linkId            String?
+  link              Link?     @relation(fields: [linkId], references: [id], onDelete: SetNull)
+
+  // Optional viewer group relationship
+  viewerGroupId     String?
+  viewerGroup       ViewerGroup? @relation(fields: [viewerGroupId], references: [id], onDelete: SetNull)
+
+  // Original view that initiated the conversation (for reference)
+  initialViewId     String?
+  initialView       View?     @relation(name: "initialView", fields: [initialViewId], references: [id], onDelete: SetNull)
+
+  teamId            String
+  team              Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  // Track all views that accessed this conversation
+  views             ConversationView[]
+
+  // Track participants including the owner
+  participants      ConversationParticipant[]
+
+  // Track conversations
+  messages          Message[]
+  lastMessageAt     DateTime? // Last message timestamp
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([dataroomId])
+  @@index([dataroomDocumentId])
+  @@index([linkId])
+  @@index([teamId])
+  @@index([viewerGroupId])
+  @@index([initialViewId])
+}
+
+// Define conversation visibility options
+enum ConversationVisibility {
+  PRIVATE        // Only visible to participants and team members
+  PUBLIC_LINK    // Visible to all viewers with access to the specific link
+  PUBLIC_GROUP   // Visible to all viewers in the specific group
+  PUBLIC_DOCUMENT // Visible to all viewers with access to the document, across any link
+  PUBLIC_DATAROOM // Visible to all viewers with access to the dataroom
+}
+
+// Define participant roles
+enum ParticipantRole {
+  OWNER          // Created the conversation
+  PARTICIPANT    // Joined the conversation later
+}
+
+// Track participants in a conversation (including the owner)
+model ConversationParticipant {
+  id              String          @id @default(cuid())
+  conversationId  String
+  conversation    Conversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  // Role in the conversation
+  role            ParticipantRole @default(PARTICIPANT)
+
+  // Participant can be either a viewer or a user
+  viewerId        String?
+  viewer          Viewer?         @relation(fields: [viewerId], references: [id], onDelete: SetNull)
+  userId          String?
+  user            User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Notification preferences
+  receiveNotifications Boolean     @default(false)
+
+  createdAt       DateTime        @default(now())
+
+  @@unique([conversationId, viewerId])
+  @@unique([conversationId, userId])
+  @@index([conversationId])
+  @@index([viewerId])
+  @@index([userId])
+}
+
+model Message {
+  id              String       @id @default(cuid())
+  content         String       // The actual message content
+
+  // Conversation relationship
+  conversationId  String
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  // Sender information
+  userId          String?      // Optional - for team members
+  user            User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  viewerId        String?      // Optional - for viewers
+  viewer          Viewer?      @relation(fields: [viewerId], references: [id], onDelete: SetNull)
+
+  // The specific view when this message was sent (for tracking)
+  viewId          String?
+  view            View?        @relation(fields: [viewId], references: [id], onDelete: SetNull)
+
+  // Tracking
+  isRead          Boolean      @default(false)
+  
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([conversationId])
+  @@index([userId])
+  @@index([viewerId])
+  @@index([viewId])
+}
+
+// Join table to track all views that accessed a conversation
+model ConversationView {
+  id              String       @id @default(cuid())
+  conversationId  String
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  viewId          String
+  view            View         @relation(fields: [viewId], references: [id], onDelete: Cascade)
+
+  createdAt       DateTime     @default(now())
+
+  @@unique([conversationId, viewId])
+  @@index([conversationId])
+  @@index([viewId])
+}
+model Dataroom {
+  id           String             @id @default(cuid())
+  pId          String             @unique // This is the generated public ID for the dataroom dr_1234
+  name         String
+  description  String?
+  teamId       String
+  team         Team               @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  documents    DataroomDocument[]
+  folders      DataroomFolder[]
+  links        Link[]
+  views        View[]
+  viewers      Viewer[]
+  viewerGroups ViewerGroup[]
+  brand        DataroomBrand?
+
+  // conversation
+  conversationsEnabled Boolean      @default(false)
+  conversations        Conversation[]
+
+  // upload external documents
+  uploadedDocuments DocumentUpload[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([teamId])
+}
+
+model DataroomDocument {
+  id         String          @id @default(cuid())
+  dataroomId String
+  dataroom   Dataroom        @relation(fields: [dataroomId], references: [id], onDelete: Cascade)
+  documentId String
+  document   Document        @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  folderId   String?
+  folder     DataroomFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  orderIndex Int?
+
+  conversations     Conversation[]
+
+  uploadedDocuments DocumentUpload[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([dataroomId, documentId])
+  @@index([folderId])
+  @@index([dataroomId, folderId, orderIndex])
+}
+
+model DataroomFolder {
+  id           String             @id @default(cuid())
+  name         String
+  path         String // the materialized path to the folder; starts always with "/"
+  parentId     String?
+  documents    DataroomDocument[]
+  childFolders DataroomFolder[]   @relation("SubFolders")
+  parentFolder DataroomFolder?    @relation("SubFolders", fields: [parentId], references: [id], onDelete: SetNull)
+  dataroomId   String
+  dataroom     Dataroom           @relation(fields: [dataroomId], references: [id], onDelete: Cascade)
+  orderIndex   Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([dataroomId, path])
+  @@index([parentId])
+  @@index([dataroomId, parentId, orderIndex])
+}
+
+model DataroomBrand {
+  id          String   @id @default(cuid())
+  logo        String? // This should be a reference to where the file is stored (S3, Google Cloud Storage, etc.)
+  banner      String? // This should be a reference to where the file is stored (S3, Google Cloud Storage, etc.)
+  brandColor  String? // This should be a reference to the brand color
+  accentColor String? // This should be a reference to the accent color
+  dataroomId  String   @unique
+  dataroom    Dataroom @relation(fields: [dataroomId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ViewerGroup {
+  id             String                      @id @default(cuid())
+  name           String
+  members        ViewerGroupMembership[]
+  domains        String[]
+  links          Link[]
+  accessControls ViewerGroupAccessControls[]
+  allowAll       Boolean                     @default(false)
+
+  dataroomId String
+  dataroom   Dataroom @relation(fields: [dataroomId], references: [id], onDelete: Cascade)
+  teamId     String
+  team       Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  views View[]
+  conversations  Conversation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([dataroomId])
+  @@index([teamId])
+}
+
+model ViewerGroupMembership {
+  id       String      @id @default(cuid())
+  viewerId String
+  viewer   Viewer      @relation(fields: [viewerId], references: [id], onDelete: Cascade)
+  groupId  String
+  group    ViewerGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([viewerId, groupId])
+  @@index([viewerId])
+  @@index([groupId])
+}
+
+model ViewerGroupAccessControls {
+  id      String      @id @default(cuid())
+  groupId String
+  group   ViewerGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  // Access control for items (documents or dataroom items)
+  itemId   String // This can be a document ID or a dataroom item ID
+  itemType ItemType // Enum: DATAROOM_DOCUMENT, DATAROOM_FOLDER
+
+  // Granular permissions
+  canView     Boolean @default(true)
+  canDownload Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([groupId, itemId])
+  @@index([groupId])
+}
+
+enum ItemType {
+  DATAROOM_DOCUMENT
+  DATAROOM_FOLDER
+}
+enum LinkType {
+  DOCUMENT_LINK
+  DATAROOM_LINK
+}
+
+enum LinkAudienceType {
+  GENERAL
+  GROUP
+  TEAM
+}
+
+model Link {
+  id                         String     @id @default(cuid())
+  document                   Document?  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  documentId                 String? // This can be nullable, representing links without documents
+  dataroom                   Dataroom?  @relation(fields: [dataroomId], references: [id], onDelete: Cascade)
+  dataroomId                 String? // This can be nullable, representing links without datarooms
+  linkType                   LinkType   @default(DOCUMENT_LINK) // This will store the type of the link
+  url                        String?    @unique
+  name                       String? // Link name
+  slug                       String? // Link slug for pretty URLs
+  expiresAt                  DateTime? // Optional expiration date
+  password                   String? // Optional password for link protection
+  allowList                  String[] // Array of emails and domains allowed to view the document
+  denyList                   String[] // Array of emails and domains denied to view the document
+  emailProtected             Boolean    @default(true) // Optional email protection
+  emailAuthenticated         Boolean    @default(false) // Optional email authentication flag
+  allowDownload              Boolean?   @default(false) // Optional give user a option to allow to download the document
+  isArchived                 Boolean    @default(false) // Indicates if the link is archived
+  views                      View[]
+  domain                     Domain?    @relation(fields: [domainId], references: [id], onDelete: SetNull)
+  domainId                   String? // This can be nullable, representing links without custom domains
+  domainSlug                 String? // This will store the domain's slug even if the domain is deleted
+  createdAt                  DateTime   @default(now())
+  updatedAt                  DateTime   @updatedAt
+  enableNotification         Boolean?   @default(true) // Optional give user a option to pause/resume the notifications
+  enableFeedback             Boolean?   @default(false) // Optional give user a option to enable the reactions toolbar
+  enableQuestion             Boolean?   @default(false) // Optional give user a option to enable the question feedback
+  enableScreenshotProtection Boolean?   @default(false) // Optional give user a option to enable the screenshot protection
+  feedback                   Feedback?
+  enableAgreement            Boolean?   @default(false) // Optional give user a option to enable the terms and conditions
+  agreement                  Agreement? @relation(fields: [agreementId], references: [id], onDelete: SetNull)
+  agreementId                String? // This can be nullable, representing links without agreements
+  showBanner                 Boolean?   @default(false) // Optional give user a option to show the banner and end of document signup form
+  enableWatermark            Boolean?   @default(false) // Optional give user a option to enable the watermark
+  watermarkConfig            Json? // This will store the watermark configuration: {text: "Confidential", isTiled: false, color: "#000000", fontSize: 12, opacity: 0.5, rotation: 30, position: "top-right"}
+
+  // group links
+  audienceType LinkAudienceType @default(GENERAL) // This will store the audience type of the link
+  groupId      String?
+  group        ViewerGroup?     @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  // custom metatags
+  metaTitle           String? // This will be the meta title of the link
+  metaDescription     String? // This will be the meta description of the link
+  metaImage           String? // This will be the meta image of the link
+  metaFavicon         String? // This will be the meta favicon of the link
+  enableCustomMetatag Boolean? @default(false) // Optional give user a option to enable the custom metatag
+
+  // conversation
+  enableConversation Boolean      @default(false)  // Controls if conversations are allowed on this link
+  conversations        Conversation[]
+
+  // upload
+  enableUpload Boolean? @default(false) // Optional give user a option to enable the upload document function
+  isFileRequestOnly Boolean? @default(false) // Optional give user a option to enable the file request only
+  uploadFolderId     String? // This can be nullable, indicating upload to root folder, either document folder or dataroom folder
+
+  uploadedDocuments DocumentUpload[]
+
+  teamId String?
+  team   Team?   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  customFields CustomField[]
+
+  @@unique([domainSlug, slug])
+  @@index([documentId])
+  @@index([teamId])
+}
+
+model LinkPreset {
+  id     String @id @default(cuid())
+  name   String
+  teamId String
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  enableCustomMetaTag Boolean? @default(false) // Optional give user a option to enable the custom metatag
+  metaTitle           String? // This will be the meta title of the link
+  metaDescription     String? // This will be the meta description of the link
+  metaImage           String? // This will be the meta image of the link 
+  metaFavicon         String? // This will be the meta favicon of the link
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([teamId])
+}
+
+enum CustomFieldType {
+  SHORT_TEXT
+  LONG_TEXT
+  NUMBER
+  PHONE_NUMBER
+  URL
+  CHECKBOX
+  SELECT
+  MULTI_SELECT
+}
+
+model CustomField {
+  id          String          @id @default(cuid())
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  type        CustomFieldType
+  identifier  String
+  label       String
+  placeholder String?
+  required    Boolean         @default(false)
+  disabled    Boolean         @default(false)
+  link        Link            @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  linkId      String
+  orderIndex  Int             @default(0)
+
+  @@index([linkId])
+}
+
+model CustomFieldResponse {
+  id        String   @id @default(cuid())
+  data      Json // Store the custom field responses as a JSON object [{ "identifier": "value", "label": "value", "response:" }]
+  viewId    String   @unique
+  view      View     @relation(fields: [viewId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([viewId])
+}
